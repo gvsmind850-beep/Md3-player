@@ -16,18 +16,29 @@ data class Track(
     val title: String,
     val artist: String,
     val cover: String?,
-    val durationMs: Long
+    val durationMs: Long,
+    val bg: String? = null
+)
+
+data class Playlist(
+    val id: String,
+    val name: String,
+    val trackIds: List<String>
 )
 
 data class AppSettings(
     val themeMode: Int = 0, // 0 - системная, 1 - светлая, 2 - тёмная
     val dynamicColor: Boolean = true,
     val hue: Float = 265f,
-    val amoled: Boolean = false
+    val amoled: Boolean = false,
+    val bgStyle: Int = 0, // 0 - размытая обложка, 1 - свой фон, 2 - без фона
+    val globalBg: String? = null,
+    val blurDp: Float = 32f
 )
 
 class Repository(private val context: Context) {
     private val libFile = File(context.filesDir, "library.json")
+    private val plFile = File(context.filesDir, "playlists.json")
     private val coversDir = File(context.filesDir, "covers").also { it.mkdirs() }
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
@@ -43,7 +54,8 @@ class Repository(private val context: Context) {
                     title = o.getString("title"),
                     artist = o.getString("artist"),
                     cover = if (o.isNull("cover")) null else o.getString("cover"),
-                    durationMs = o.optLong("duration", 0L)
+                    durationMs = o.optLong("duration", 0L),
+                    bg = if (o.isNull("bg")) null else o.getString("bg")
                 )
             }
         } catch (e: Exception) {
@@ -61,16 +73,52 @@ class Repository(private val context: Context) {
             o.put("artist", t.artist)
             o.put("cover", t.cover ?: JSONObject.NULL)
             o.put("duration", t.durationMs)
+            o.put("bg", t.bg ?: JSONObject.NULL)
             arr.put(o)
         }
         libFile.writeText(arr.toString())
+    }
+
+    fun loadPlaylists(): List<Playlist> {
+        if (!plFile.exists()) return emptyList()
+        return try {
+            val arr = JSONArray(plFile.readText())
+            List(arr.length()) { i ->
+                val o = arr.getJSONObject(i)
+                val ids = o.getJSONArray("tracks")
+                Playlist(
+                    id = o.getString("id"),
+                    name = o.getString("name"),
+                    trackIds = List(ids.length()) { j -> ids.getString(j) }
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun savePlaylists(list: List<Playlist>) {
+        val arr = JSONArray()
+        for (p in list) {
+            val o = JSONObject()
+            o.put("id", p.id)
+            o.put("name", p.name)
+            val ids = JSONArray()
+            for (t in p.trackIds) ids.put(t)
+            o.put("tracks", ids)
+            arr.put(o)
+        }
+        plFile.writeText(arr.toString())
     }
 
     fun loadSettings(): AppSettings = AppSettings(
         themeMode = prefs.getInt("themeMode", 0),
         dynamicColor = prefs.getBoolean("dynamic", true),
         hue = prefs.getFloat("hue", 265f),
-        amoled = prefs.getBoolean("amoled", false)
+        amoled = prefs.getBoolean("amoled", false),
+        bgStyle = prefs.getInt("bgStyle", 0),
+        globalBg = prefs.getString("globalBg", null),
+        blurDp = prefs.getFloat("blurDp", 32f)
     )
 
     fun saveSettings(s: AppSettings) {
@@ -79,6 +127,9 @@ class Repository(private val context: Context) {
             .putBoolean("dynamic", s.dynamicColor)
             .putFloat("hue", s.hue)
             .putBoolean("amoled", s.amoled)
+            .putInt("bgStyle", s.bgStyle)
+            .putString("globalBg", s.globalBg)
+            .putFloat("blurDp", s.blurDp)
             .apply()
     }
 
@@ -123,6 +174,7 @@ class Repository(private val context: Context) {
         )
     }
 
+    /** Копирует выбранную картинку в память приложения (для обложек и фонов). */
     fun saveCover(uri: Uri): String? {
         return try {
             val f = File(coversDir, UUID.randomUUID().toString() + ".img")

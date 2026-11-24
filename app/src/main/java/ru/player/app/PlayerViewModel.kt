@@ -24,6 +24,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
 
 fun Track.toMediaItem(): MediaItem = MediaItem.Builder()
     .setMediaId(id)
@@ -41,6 +42,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = Repository(app)
 
     var tracks by mutableStateOf<List<Track>>(emptyList())
+        private set
+    var playlists by mutableStateOf<List<Playlist>>(emptyList())
         private set
     var settings by mutableStateOf(repo.loadSettings())
         private set
@@ -90,6 +93,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         tracks = repo.loadTracks()
+        playlists = repo.loadPlaylists()
         val token = SessionToken(app, ComponentName(app, PlaybackService::class.java))
         val future = MediaController.Builder(app, token).buildAsync()
         future.addListener({
@@ -127,6 +131,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun persistPlaylists() {
+        val snapshot = playlists
+        viewModelScope.launch(Dispatchers.IO) { repo.savePlaylists(snapshot) }
+    }
+
     // ---------- Библиотека ----------
 
     fun addTracks(uris: List<Uri>) {
@@ -139,13 +148,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val snapshot = tracks
             withContext(Dispatchers.IO) { repo.saveTracks(snapshot) }
             importing = false
-            controller?.let { c ->
-                if (c.mediaItemCount > 0) c.addMediaItems(added.map { it.toMediaItem() })
-            }
         }
     }
 
-    fun updateTrack(id: String, title: String, artist: String, newCover: Uri?, removeCover: Boolean) {
+    fun updateTrack(
+        id: String,
+        title: String,
+        artist: String,
+        newCover: Uri?,
+        removeCover: Boolean,
+        newBg: Uri?,
+        removeBg: Boolean
+    ) {
         viewModelScope.launch {
             val old = tracks.firstOrNull { it.id == id } ?: return@launch
             val coverPath: String? = withContext(Dispatchers.IO) {
@@ -155,13 +169,24 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     else -> old.cover
                 }
             }
+            val bgPath: String? = withContext(Dispatchers.IO) {
+                when {
+                    newBg != null -> repo.saveCover(newBg) ?: old.bg
+                    removeBg -> null
+                    else -> old.bg
+                }
+            }
             if (coverPath != old.cover) {
                 withContext(Dispatchers.IO) { repo.deleteCover(old.cover) }
+            }
+            if (bgPath != old.bg) {
+                withContext(Dispatchers.IO) { repo.deleteCover(old.bg) }
             }
             val updated = old.copy(
                 title = title.ifBlank { old.title },
                 artist = artist,
-                cover = coverPath
+                cover = coverPath,
+                bg = bgPath
             )
             tracks = tracks.map { if (it.id == id) updated else it }
             val snapshot = tracks
@@ -188,38 +213,79 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         tracks = tracks.filter { it.id != id }
+        playlists = playlists.map { it.copy(trackIds = it.trackIds.filter { t -> t != id }) }
         val snapshot = tracks
         viewModelScope.launch(Dispatchers.IO) {
             repo.deleteCover(old.cover)
+            repo.deleteCover(old.bg)
             repo.saveTracks(snapshot)
         }
+        persistPlaylists()
+    }
+
+    // ---------- Плейлисты ----------
+
+    fun createPlaylist(name: String, trackIds: List<String> = emptyList()): String {
+        val p = Playlist(UUID.randomUUID().toString(), name, trackIds)
+        playlists = playlists + p
+        persistPlaylists()
+        return p.id
+    }
+
+    fun renamePlaylist(id: String, name: String) {
+        playlists = playlists.map { if (it.id == id) it.copy(name = name) else it }
+        persistPlaylists()
+    }
+
+    fun deletePlaylist(id: String) {
+        playlists = playlists.filter { it.id != id }
+        persistPlaylists()
+    }
+
+    fun addToPlaylist(id: String, trackIds: List<String>) {
+        playlists = playlists.map { p ->
+            if (p.id == id) p.copy(trackIds = p.trackIds + trackIds.filter { it !in p.trackIds }) else p
+        }
+        persistPlaylists()
+    }
+
+    fun removeFromPlaylist(id: String, trackId: String) {
+        playlists = playlists.map { p ->
+            if (p.id == id) p.copy(trackIds = p.trackIds.filter { it != trackId }) else p
+        }
+        persistPlaylists()
     }
 
     // ---------- Воспроизведение ----------
 
-    private fun queueMatches(c: MediaController): Boolean {
-        if (c.mediaItemCount != tracks.size) return false
-        for (i in tracks.indices) {
-            if (c.getMediaItemAt(i).mediaId != tracks[i].id) return false
+    private fun queueMatches(c: MediaController, queue: List<Track>): Boolean {
+        if (c.mediaItemCount != queue.size) return false
+        for (i in queue.indices) {
+            if (c.getMediaItemAt(i).mediaId != queue[i].id) return false
         }
         return true
     }
 
-    fun play(id: String) {
+    fun play(id: String, queue: List<Track> = tracks) {
         val c = controller ?: return
-        val index = tracks.indexOfFirst { it.id == id }
+        val index = queue.indexOfFirst { it.id == id }
         if (index < 0) return
-        if (queueMatches(c)) {
+        if (queueMatches(c, queue)) {
             if (id == currentId) {
                 if (!c.isPlaying) c.play()
                 return
             }
             c.seekTo(index, 0L)
         } else {
-            c.setMediaItems(tracks.map { it.toMediaItem() }, index, 0L)
+            c.setMediaItems(queue.map { it.toMediaItem() }, index, 0L)
             c.prepare()
         }
         c.play()
+    }
+
+    fun playQueue(queue: List<Track>) {
+        val first = queue.firstOrNull() ?: return
+        play(first.id, queue)
     }
 
     fun togglePlay() {
@@ -259,6 +325,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun updateSettings(s: AppSettings) {
         settings = s
         repo.saveSettings(s)
+    }
+
+    fun setGlobalBg(uri: Uri?) {
+        viewModelScope.launch {
+            val old = settings.globalBg
+            val path: String? = if (uri == null) null else withContext(Dispatchers.IO) { repo.saveCover(uri) }
+            if (uri != null && path == null) return@launch
+            if (old != null) withContext(Dispatchers.IO) { repo.deleteCover(old) }
+            updateSettings(settings.copy(globalBg = path))
+        }
     }
 
     override fun onCleared() {
