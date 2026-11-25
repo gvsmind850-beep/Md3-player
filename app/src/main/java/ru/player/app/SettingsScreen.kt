@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -93,7 +94,7 @@ private fun Swatch(hue: Float, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-fun SettingsScreen(vm: PlayerViewModel) {
+fun SettingsScreen(vm: PlayerViewModel, openGestures: () -> Unit) {
     val s = vm.settings
     val bgPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.setGlobalBg(uri)
@@ -204,11 +205,22 @@ fun SettingsScreen(vm: PlayerViewModel) {
                 modifier = Modifier.padding(horizontal = 4.dp)
             )
 
+            SectionTitle("Жесты")
+            ListItem(
+                modifier = Modifier.bounceClick(RoundedCornerShape(20.dp), onClick = openGestures),
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                headlineContent = { Text("Изучить жесты") },
+                supportingContent = { Text("Свайпы, двойной тап и другие приёмы. Можно потренироваться") },
+                trailingContent = {
+                    Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null)
+                }
+            )
+
             SectionTitle("О приложении")
             ListItem(
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 headlineContent = { Text("SAplay") },
-                supportingContent = { Text("Версия 2.0") }
+                supportingContent = { Text("Версия 3.0") }
             )
             Spacer(Modifier.height(150.dp))
         }

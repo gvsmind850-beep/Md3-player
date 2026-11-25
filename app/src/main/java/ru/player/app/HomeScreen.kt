@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 
 package ru.player.app
 
@@ -6,6 +6,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -82,7 +84,7 @@ fun HomeScreen(vm: PlayerViewModel, openPlayer: () -> Unit, openPlaylist: (Strin
     val scheme = MaterialTheme.colorScheme
 
     Column(Modifier.fillMaxSize()) {
-        Crossfade(targetState = searching, label = "header") { isSearching ->
+        Crossfade(targetState = searching, animationSpec = tween(250), label = "header") { isSearching ->
             if (isSearching) {
                 Row(
                     modifier = Modifier
@@ -198,6 +200,7 @@ fun HomeScreen(vm: PlayerViewModel, openPlayer: () -> Unit, openPlaylist: (Strin
             } else {
                 items(list, key = { it.id }) { t ->
                     TrackRow(
+                        modifier = Modifier.animateItemPlacement(),
                         track = t,
                         playing = t.id == vm.currentId,
                         onClick = {

@@ -1,8 +1,8 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 
 package ru.player.app
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -83,9 +83,9 @@ fun PlaylistsScreen(vm: PlayerViewModel, openPlaylist: (String) -> Unit) {
                     val tracks = p.trackIds.mapNotNull { id -> vm.tracks.firstOrNull { it.id == id } }
                     ListItem(
                         modifier = Modifier
+                            .animateItemPlacement()
                             .padding(horizontal = 8.dp)
-                            .clip(RoundedCornerShape(22.dp))
-                            .clickable { openPlaylist(p.id) },
+                            .bounceClick(RoundedCornerShape(22.dp), onClick = { openPlaylist(p.id) }),
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         leadingContent = {
                             CoverImage(
@@ -210,6 +210,7 @@ fun PlaylistDetailScreen(
             }
             items(tracks, key = { it.id }) { t ->
                 TrackRow(
+                    modifier = Modifier.animateItemPlacement(),
                     track = t,
                     playing = t.id == vm.currentId,
                     onClick = {

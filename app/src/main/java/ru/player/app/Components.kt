@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 
 package ru.player.app
 
@@ -73,6 +73,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import java.io.File
 import kotlin.math.max
 
@@ -180,26 +194,7 @@ fun BottomNavBar(selected: String, onSelect: (String) -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             items.forEach { (route, label, icon) ->
-                val sel = route == selected
-                val fg = if (sel) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.onSurfaceVariant
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(26.dp))
-                        .background(if (sel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                        .clickable { onSelect(route) }
-                        .padding(vertical = 8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(icon, contentDescription = label, tint = fg)
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
-                        color = fg
-                    )
-                }
+                NavItem(label, icon, route == selected) { onSelect(route) }
             }
         }
     }
@@ -210,12 +205,38 @@ fun MiniPlayer(vm: PlayerViewModel, onClick: () -> Unit) {
     val t = vm.current ?: return
     val dur = max(vm.durationMs, t.durationMs).coerceAtLeast(1L)
     val fg = MaterialTheme.colorScheme.onPrimaryContainer
+    val swipe = with(LocalDensity.current) { 48.dp.toPx() }
+    val dragX = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
     Surface(
         modifier = Modifier
             .padding(horizontal = 16.dp, vertical = 4.dp)
             .fillMaxWidth()
-            .clip(RoundedCornerShape(28.dp))
-            .clickable(onClick = onClick),
+            .graphicsLayer { translationX = dragX.value }
+            .bounceClick(RoundedCornerShape(28.dp), onClick = onClick)
+            .pointerInput(Unit) {
+                var dx = 0f
+                var dy = 0f
+                detectDragGestures(
+                    onDragStart = {
+                        dx = 0f
+                        dy = 0f
+                    },
+                    onDragEnd = {
+                        if (abs(dy) > abs(dx) && dy < -swipe) onClick()
+                        else if (abs(dx) > abs(dy) && dx < -swipe) vm.next()
+                        else if (abs(dx) > abs(dy) && dx > swipe) vm.previous()
+                        scope.launch { dragX.animateTo(0f, spring(dampingRatio = 0.6f)) }
+                    },
+                    onDragCancel = { scope.launch { dragX.animateTo(0f, spring()) } },
+                    onDrag = { change, d ->
+                        change.consume()
+                        dx += d.x
+                        dy += d.y
+                        scope.launch { dragX.snapTo(dragX.value + d.x * 0.5f) }
+                    }
+                )
+            },
         color = MaterialTheme.colorScheme.primaryContainer,
         shape = RoundedCornerShape(28.dp),
         shadowElevation = 4.dp
@@ -269,19 +290,29 @@ fun TrackRow(
     track: Track,
     playing: Boolean,
     onClick: () -> Unit,
-    actions: List<Pair<String, () -> Unit>>
+    actions: List<Pair<String, () -> Unit>>,
+    modifier: Modifier = Modifier
 ) {
     var menu by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
     val artist = track.artist.ifBlank { "Неизвестный исполнитель" }
+    val highlight by animateColorAsState(
+        if (playing) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else Color.Transparent,
+        tween(350),
+        label = "highlight"
+    )
     ListItem(
-        modifier = Modifier
+        modifier = modifier
             .padding(horizontal = 8.dp)
-            .clip(RoundedCornerShape(22.dp))
-            .background(
-                if (playing) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
-                else Color.Transparent
+            .bounceClick(
+                RoundedCornerShape(22.dp),
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    menu = true
+                },
+                onClick = onClick
             )
-            .clickable(onClick = onClick),
+            .background(highlight),
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         leadingContent = {
             CoverImage(track.coverModel(), Modifier.size(60.dp).clip(RoundedCornerShape(16.dp)))
@@ -329,8 +360,7 @@ fun PlaylistCard(playlist: Playlist, tracks: List<Track>, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .width(172.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .clickable(onClick = onClick)
+            .bounceClick(RoundedCornerShape(24.dp), onClick = onClick)
             .padding(bottom = 4.dp)
     ) {
         Box(Modifier.fillMaxWidth().height(184.dp)) {
@@ -399,9 +429,8 @@ fun NewPlaylistCard(onClick: () -> Unit) {
             .width(172.dp)
             .height(184.dp)
             .padding(top = 22.dp)
-            .clip(RoundedCornerShape(26.dp))
-            .background(scheme.primaryContainer.copy(alpha = 0.5f))
-            .clickable(onClick = onClick),
+            .bounceClick(RoundedCornerShape(26.dp), onClick = onClick)
+            .background(scheme.primaryContainer.copy(alpha = 0.5f)),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
